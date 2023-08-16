@@ -1,0 +1,131 @@
+* Letkis — An implementation of ChaCha20 & Poly1305
+
+/Letkis/ is an implementation of ChaCha20 stream cipher and Poly1305
+authenticator. Both ChaCha20 and Poly1305 are created by Daniel
+Bernstein (see [[http://cr.yp.to/chacha.html]] and
+[[https://cr.yp.to/mac.html]]). /Letkis/ is quite a straightforward
+translation of the pseudocode in [[https://datatracker.ietf.org/doc/html/rfc8439][RFC 8439]] into [[https://lisp-lang.org/][Common Lisp]].
+
+As an addition to functionality defined in RFC 8439, /Letkis/ also has
+a key derivation function loosely based on a comment in [[https://datatracker.ietf.org/doc/html/rfc7539][RFC 7539
+section 2.7]] to turn a password and salt combination into a ChaCha20
+seed state. See [[DIY KDF and related functions]].
+
+/Letkis/ should be used with caution as it hasn't really been written
+with any level of a cryptographic threat in mind. As an example, a
+Common Lisp implementation's memory allocation and garbage collector
+framework is used throughout (bignums, arrays, etc. etc.) which may
+expose /Letkis/ to side-channel vulnerabilities, depending on the host
+Lisp's implementation.
+
+** Usage
+
+/Letkis/ can only be compiled with [[https://ecl.common-lisp.dev/][Embeddable Common Lisp (ECL)]] and
+[[https://www.sbcl.org/][SBCL]]. Compiling with other Common Lisp compilers will require adding
+some bit-rotate implementation in function ~q-round~ defined in file
+[[file:chacha20.lisp][chacha20.lisp]].
+
+*** RFC 8439 compliant usage
+
+The most interesting use case will undoubtly be
+=AEAD_CHACHA20_POLY1305= functionality, described in the [[https://datatracker.ietf.org/doc/html/rfc8439][RFC 8439]]
+section 2.8. This is implemented by functions
+- ~aead-chacha20-poly1305-encrypt~
+- ~aead-chacha20-poly1305-decrypt~
+
+They work as explained in section 2.8.2. In short, this is how you
+could call the functions if ~msg~ and ~aad~ were strings and ~key~,
+~nonce~, ~ciphertext~ and ~tag~ arrays of unsigned bytes:
+
+#+begin_src lisp
+  (letkis-chacha:aead-chacha20-poly1305-encrypt key nonce (utf8-to-u8vec msg) (utf8-to-u8vec aad))
+  (letkis-chacha:aead-chacha20-poly1305-decrypt key nonce (concatenate '(array (unsigned-byte 8) 1) ciphertext tag) (utf8-to-u8vec aad))
+#+end_src
+
+For more details and implementations of ~utf8-to-u8vec~ etc., please
+see the top part of file [[file:tests/examples.lisp][tests/examples.lisp]]. Note that ~constant~ and
+~IV~ mentioned as inputs to ~chacha20_aead_encrypt~ in RFC section
+2.8.1 should be concatenated by user into single nonce when calling
+aforementioned functions. See test ~2-8-2-aead-chacha-poly~ in file
+[[file:tests/unit-tests.lisp][tests/unit-tests.lisp]].
+
+The function ~poly1305-mac~ is also something you might want to use
+directly as a hash function. See section 2.5 and [[file:tests/examples.lisp][tests/examples.lisp]]
+near the definition of example function ~poly1305-hash~ and the
+corresponding tests.
+
+*** DIY KDF and related functions
+
+The following functionality uses author's Key Derivation Function
+(KDF) ~chacha20-kdf~ which is not a part of any of the RFCs. *Caveat
+emptor!* See function's docstring for implementation details.
+
+With these functions initial ChaCha20 state is derived from password
+octet vector of any length making usage more straightforward. The
+functions are
+- ~encode-octets~
+- ~decode-octets~
+- ~encode-file~
+- ~decode-file~
+
+These functions operate on octet vectors (arrays of unsigned
+bytes). That means e.g. password string's character encoding matters
+are left for the user. See function definitions ~encode-msg~ and
+~decode-msg~ in file [[file:tests/examples.lisp][tests/examples.lisp]] for further details.
+
+Note that the KDF is very slow on Raspberry Pi 3 and ECL. The
+aforementioned functions ~encode-msg~ and ~decode-msg~ describe how to
+increase the timeout on that platform or alternatively reduce the KDF
+iteration count.
+
+** Motivation
+
+/Letkis/ was created as I needed a stream cipher for a project written
+in [[https://lisp-lang.org/][Common Lisp]] running on a [[https://www.raspberrypi.org/][Raspberry Pi]] 3. This combination proved a
+bit challenging at the time the project was born (things have changed
+now) for several reasons:
+
+Official Raspberry Pi operating system was based on a 32-bit Linux
+system. The most prominent Common Lisp compiler, [[https://www.sbcl.org/][SBCL]], did not have a
+multi-threading capable implementation for 32-bit ARM. Another popular
+compiler [[https://ccl.clozure.com/][Clozure Common Lisp]] had some strange bugs causing segfaults
+on Raspberry Pi 3. Therefore I decided to go with [[https://ecl.common-lisp.dev/][Embeddable Common
+Lisp (ECL)]] that didn't have these problems.
+
+There's a cryptographic library [[https://github.com/sharplispers/ironclad][Ironclad]] for Common Lisp that would
+have fulfilled my needs. However, trying to compile Ironclad with ECL
+on the Raspberry Pi 3 didn't work as the compiler ran out of memory.
+
+Therefore I decided to implement ChaCha20 myself, on one hand as a
+personal study project and on the other as a small, lightweight
+library of a modern stream cipher, easily compilable even on a
+Raspberry Pi 3.
+
+Later Raspberry Pi released a 64-bit version of its operating system
+on which SBCL supports threads so I moved back to SBCL, as software
+built with SBCL use generally less resources than with ECL. Due to
+this history, this package is tested and works on ECL and SBCL.
+
+As Ironclad is a well-established Common Lisp cryptography library and
+it can be successfully compiled on Raspberry Pi 3 with SBCL I
+recommend using that instead of /Letkis/, if the long compilation time
+isn't an obstacle.
+
+** Licensing
+
+This implementation is directly based on the pseudocode in the IETF
+RFC 8439. The code components of IETF RFCs [[https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/][are licensed under BSD
+license]]. The parts of /Letkis/ that are translations of IETF RFC
+8439 pseudocode into Common Lisp are marked with docstring or comment
+text "This code was derived from IETF RFC 8439. Please reproduce this
+note if possible." The original IETF copyright is pasted once in each
+file where such translated pseudocode parts appear just before first
+such appearance.
+
+Also the test vector values in [[file:tests/unit-tests.lisp][tests/unit-tests.lisp]] are derived
+directly from the IETF RFC 8439. These uses are marked with "These
+test vector values were derived from IETF RFC 8439. Please reproduce
+this note if possible."
+
+All other work (original work by the author) is licensed under BSD
+license. See [[file:LICENSE][LICENSE]].
